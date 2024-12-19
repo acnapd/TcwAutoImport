@@ -2,6 +2,7 @@ from config import get_command_line_args
 from api import get_auth_token, get_nodes
 from data_processing import fetch_news_data, update_temperatures_in_nodes
 import configparser
+import asyncio
 
 if __name__ == "__main__":
     args = get_command_line_args()  # Получаем параметры запуска
@@ -24,9 +25,9 @@ if __name__ == "__main__":
         # Получаем список nodes
         nodes = get_nodes(server_url, auth_token)
 
-        # Обновляем температуры в объектах
-        update_temperatures_in_nodes(
-            all_news_data, nodes, server_url, auth_token)
+        # Обновляем температуры в объектах асинхронно
+        asyncio.run(update_temperatures_in_nodes(
+            all_news_data, nodes, server_url, auth_token))
     else:
         print("Завершение работы.")
     # Сохраняем последний индекс только если он был успешным
