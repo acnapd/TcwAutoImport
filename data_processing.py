@@ -3,6 +3,8 @@ from bs4 import BeautifulSoup
 import re  # Импортируем модуль для работы с регулярными выражениями
 from babel.dates import format_date  # Импортируем функцию для форматирования дат
 from datetime import datetime
+import aiohttp
+import asyncio
 
 
 def get_water_temperatures_from_html(html_content):
@@ -96,47 +98,55 @@ def fetch_news_data(start_index):
     return all_temperatures, last_successful_index
 
 
-def update_temperatures_in_nodes(all_temperatures, nodes, server_url, auth):
+async def update_temperatures_in_nodes(all_temperatures, nodes, server_url, auth):
     if len(all_temperatures) > 0:
         print("Начинаем обновление температур в узлах.")
-        for node in nodes['nodes']:
-            if 'attributes' in node:
-                for attribute in node['attributes']:
-                    if attribute['code'] == 'sourceName':
-                        source_name = attribute['value']
-                        if source_name in all_temperatures:
-                            # Записываем температуры в соответствующие поля
-                            # Записываем летнюю температуру
-                            node['coldWaterSummerTemp'] = all_temperatures[source_name]
-                            # Записываем зимнюю температуру
-                            node['coldWaterWinterTemp'] = all_temperatures[source_name]
-                            # Получаем идентификатор узла
-                            node_id = node.get('id')
-                            print(
-                                f"Обновлены температуры для {source_name}: {all_temperatures[source_name]}")
-                            push = [
-                                {
-                                    "op": "replace",
-                                    "value": all_temperatures[source_name],
-                                    "path": "coldWaterSummerTemp"
-                                },
-                                {
-                                    "op": "replace",
-                                    "value": all_temperatures[source_name],
-                                    "path": "coldWaterWinterTemp"
-                                }
-                            ]
-
-                        # Отправка обновленных данных на сервер с использованием метода PATCH
-
-                            response = requests.patch(
-                                f"{server_url}/api/v1/Core/Nodes/{node_id}", json=push, headers={'Content-Type': 'application/json-patch+json', 'Authorization': f'Bearer {auth}'})
-                            if response.status_code == 200:
+        async with aiohttp.ClientSession() as session:
+            tasks = []  # Список для хранения задач
+            for node in nodes['nodes']:
+                if 'attributes' in node:
+                    for attribute in node['attributes']:
+                        if attribute['code'] == 'sourceName':
+                            source_name = attribute['value']
+                            if source_name in all_temperatures:
+                                node['coldWaterSummerTemp'] = all_temperatures[source_name]
+                                node['coldWaterWinterTemp'] = all_temperatures[source_name]
+                                node_id = node.get('id')
                                 print(
-                                    f"Температуры для узла {node_id} успешно обновлены.")
-                            else:
-                                print(
-                                    f"Ошибка при обновлении узла {node_id}: {response.status_code} - {response.text}")
+                                    f"Обновлены температуры для {source_name}: {all_temperatures[source_name]}")
+                                push = [
+                                    {
+                                        "op": "replace",
+                                        "value": all_temperatures[source_name],
+                                        "path": "coldWaterSummerTemp"
+                                    },
+                                    {
+                                        "op": "replace",
+                                        "value": all_temperatures[source_name],
+                                        "path": "coldWaterWinterTemp"
+                                    }
+                                ]
+
+                                # Создаем асинхронную задачу для отправки данных
+                                tasks.append(
+                                    send_update(session, server_url,
+                                                node_id, push, auth)
+                                )
+            # Ожидаем завершения всех задач
+            await asyncio.gather(*tasks)
         print("Обновление температур завершено.")
     else:
         print("Нет новых температур.")
+
+
+async def send_update(session, server_url, node_id, push, auth):
+    async with session.patch(
+        f"{server_url}/api/v1/Core/Nodes/{node_id}",
+        json=push,
+        headers={'Content-Type': 'application/json-patch+json',
+                 'Authorization': f'Bearer {auth}'}
+    ) as response:
+        if response.status == 200:
+            print(f"Температуры для узла {node_id} успешно обновлены.")
+        else:
+            print(f"Ошибка при обновлении узла {node_id}: {response.status} - {await response.text()}")
